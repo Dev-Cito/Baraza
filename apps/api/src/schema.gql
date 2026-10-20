@@ -19,6 +19,11 @@ type Comment {
   id: ID!
 }
 
+input CreatePostInput {
+  body: String!
+  title: String!
+}
+
 """
 A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
 """
@@ -31,6 +36,7 @@ input LoginInput {
 
 type Mutation {
   addComment(input: AddCommentInput!): Comment!
+  createPost(input: CreatePostInput!): Post!
   login(input: LoginInput!): AuthPayload!
   register(input: RegisterInput!): AuthPayload!
 }

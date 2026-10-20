@@ -1,16 +1,21 @@
+import { UseGuards } from '@nestjs/common';
 import {
   Args,
   Context,
   ID,
   Int,
+  Mutation,
   Parent,
   Query,
   ResolveField,
   Resolver,
 } from '@nestjs/graphql';
+import { CurrentUser } from '../auth/current-user.decorator';
+import { GqlAuthGuard } from '../auth/gql-auth.guard';
 import { Comment } from '../comments/comment.entity';
 import type { Loaders } from '../loaders/loaders.service';
 import { User } from '../users/user.entity';
+import { CreatePostInput } from './dto/create-post.input';
 import { Post } from './post.entity';
 import { PostsService } from './posts.service';
 
@@ -34,6 +39,15 @@ export class PostsResolver {
   @Query(() => Post, { nullable: true })
   post(@Args('id', { type: () => ID }) id: string): Promise<Post | null> {
     return this.postsService.findById(id);
+  }
+
+  @Mutation(() => Post)
+  @UseGuards(GqlAuthGuard)
+  createPost(
+    @Args('input') input: CreatePostInput,
+    @CurrentUser() user: User,
+  ): Promise<Post> {
+    return this.postsService.create(input, user.id);
   }
 
   @ResolveField('author', () => User)
