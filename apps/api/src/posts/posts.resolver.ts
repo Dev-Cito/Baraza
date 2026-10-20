@@ -1,5 +1,6 @@
 import {
   Args,
+  Context,
   ID,
   Int,
   Parent,
@@ -8,25 +9,19 @@ import {
   Resolver,
 } from '@nestjs/graphql';
 import { Comment } from '../comments/comment.entity';
-import { CommentsService } from '../comments/comments.service';
+import type { Loaders } from '../loaders/loaders.service';
 import { User } from '../users/user.entity';
-import { UsersService } from '../users/users.service';
 import { Post } from './post.entity';
 import { PostsService } from './posts.service';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
-// The field resolvers below are naive on purpose: each one hits the database
-// once per parent post, so a list of N posts triggers the N+1 problem.
-// DataLoader comes in the next step.
+// Field resolvers go through the per-request DataLoaders, so a list of N posts
+// costs one batched query per field instead of N.
 @Resolver(() => Post)
 export class PostsResolver {
-  constructor(
-    private readonly postsService: PostsService,
-    private readonly usersService: UsersService,
-    private readonly commentsService: CommentsService,
-  ) {}
+  constructor(private readonly postsService: PostsService) {}
 
   @Query(() => [Post])
   posts(
@@ -42,19 +37,28 @@ export class PostsResolver {
   }
 
   @ResolveField('author', () => User)
-  async author(@Parent() post: Post): Promise<User> {
-    const user = await this.usersService.findById(post.authorId);
+  async author(
+    @Parent() post: Post,
+    @Context('loaders') loaders: Loaders,
+  ): Promise<User> {
+    const user = await loaders.usersById.load(post.authorId);
     if (!user) throw new Error(`Author ${post.authorId} not found`);
     return user;
   }
 
   @ResolveField('comments', () => [Comment])
-  comments(@Parent() post: Post): Promise<Comment[]> {
-    return this.commentsService.findByPostId(post.id);
+  comments(
+    @Parent() post: Post,
+    @Context('loaders') loaders: Loaders,
+  ): Promise<Comment[]> {
+    return loaders.commentsByPostId.load(post.id);
   }
 
   @ResolveField('commentCount', () => Int)
-  commentCount(@Parent() post: Post): Promise<number> {
-    return this.commentsService.countByPostId(post.id);
+  commentCount(
+    @Parent() post: Post,
+    @Context('loaders') loaders: Loaders,
+  ): Promise<number> {
+    return loaders.commentCountByPostId.load(post.id);
   }
 }

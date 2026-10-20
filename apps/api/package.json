@@ -31,6 +31,7 @@
     "@nestjs/graphql": "13.4.5",
     "@nestjs/platform-express": "^11.2.7",
     "@nestjs/typeorm": "^11.0.3",
+    "dataloader": "^2.2.3",
     "graphql": "^16.14.2",
     "pg": "^8.23.1",
     "reflect-metadata": "^0.2.2",

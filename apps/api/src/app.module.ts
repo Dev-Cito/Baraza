@@ -9,6 +9,9 @@ import { join } from 'node:path';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { CommentsModule } from './comments/comments.module';
+import type { GraphQLContext } from './graphql-context';
+import { LoadersModule } from './loaders/loaders.module';
+import { LoadersService } from './loaders/loaders.service';
 import { PostsModule } from './posts/posts.module';
 import { UsersModule } from './users/users.module';
 
@@ -37,19 +40,28 @@ const isProduction = process.env.NODE_ENV === 'production';
             : false,
       }),
     }),
-    GraphQLModule.forRoot<ApolloDriverConfig>({
+    GraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,
-      autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
-      sortSchema: true,
-      // The legacy GraphQL Playground is deprecated; serve Apollo Sandbox on
-      // /graphql in dev instead.
-      playground: false,
-      introspection: !isProduction,
-      plugins: isProduction
-        ? []
-        : [ApolloServerPluginLandingPageLocalDefault()],
-      // Expose the HTTP request to resolvers so auth can be added later.
-      context: ({ req }: { req: Request }) => ({ req }),
+      imports: [LoadersModule],
+      inject: [LoadersService],
+      useFactory: (loadersService: LoadersService) => ({
+        autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
+        sortSchema: true,
+        // The legacy GraphQL Playground is deprecated; serve Apollo Sandbox on
+        // /graphql in dev instead.
+        playground: false,
+        introspection: !isProduction,
+        plugins: isProduction
+          ? []
+          : [ApolloServerPluginLandingPageLocalDefault()],
+        // Built once per GraphQL request: exposes the HTTP request (for auth
+        // later) and a fresh set of DataLoaders so caches are never shared
+        // across requests.
+        context: ({ req }: { req: Request }): GraphQLContext => ({
+          req,
+          loaders: loadersService.create(),
+        }),
+      }),
     }),
     UsersModule,
     PostsModule,
