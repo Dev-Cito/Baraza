@@ -1,14 +1,10 @@
 import { Field, ID, InputType } from '@nestjs/graphql';
 
+// No authorId: the author is always the authenticated user (from the JWT).
 @InputType()
 export class AddCommentInput {
   @Field(() => ID)
   postId: string;
-
-  // Temporary until auth lands: the author will then come from the
-  // authenticated user, not from client input.
-  @Field(() => ID)
-  authorId: string;
 
   @Field()
   body: string;

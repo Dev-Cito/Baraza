@@ -1,15 +1,19 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import { randomUUID } from 'node:crypto';
 import type { EventEmitter } from 'node:events';
-import type { AddressInfo } from 'node:net';
-import { Client, createClient } from 'graphql-ws';
+import { Client } from 'graphql-ws';
+import { PubSub } from 'graphql-subscriptions';
 import { DataSource } from 'typeorm';
-import WebSocket from 'ws';
-import { AppModule } from './../src/app.module';
 import { Post } from './../src/posts/post.entity';
 import { PUB_SUB } from './../src/pubsub/pubsub.module';
 import { User } from './../src/users/user.entity';
+import {
+  gql,
+  registerAndLogin,
+  startApp,
+  TestUser,
+  waitFor,
+  wsClient,
+} from './helpers';
 
 interface CommentEvent {
   id: string;
@@ -40,120 +44,103 @@ const ADD_COMMENT = /* GraphQL */ `
   }
 `;
 
-async function waitFor(condition: () => boolean, timeoutMs = 3000) {
-  const deadline = Date.now() + timeoutMs;
-  while (!condition()) {
-    if (Date.now() > deadline) throw new Error('waitFor timed out');
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-
 describe('commentAdded subscription (e2e)', () => {
   let app: INestApplication;
+  let host: string;
   let dataSource: DataSource;
-  let baseUrl: string;
-  let user: User;
+  let user: TestUser;
   let postA: Post;
   let postB: Post;
   const clients: Client[] = [];
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-    app = moduleRef.createNestApplication();
-    await app.listen(0);
-    const { port } = app.getHttpServer().address() as AddressInfo;
-    baseUrl = `localhost:${port}/graphql`;
-
+    ({ app, host } = await startApp());
     dataSource = app.get(DataSource);
-    user = await dataSource.getRepository(User).save({
-      email: `sub-test-${randomUUID()}@example.com`,
-      passwordHash: 'not-a-real-hash',
-      username: 'subscriber-test',
-    });
+    user = await registerAndLogin(host, 'subscriber-test');
     const posts = dataSource.getRepository(Post);
     postA = await posts.save({ title: 'A', body: 'A', authorId: user.id });
     postB = await posts.save({ title: 'B', body: 'B', authorId: user.id });
   });
 
   afterAll(async () => {
-    await Promise.all(clients.map((client) => client.dispose()));
+    for (const client of clients) void client.dispose();
     // Cascades to the test posts and comments.
     if (user) await dataSource.getRepository(User).delete(user.id);
     await app.close();
   });
 
   // Each subscriber gets its own WebSocket connection.
-  function subscribe(postId: string): CommentEvent[] {
-    const client = createClient({
-      url: `ws://${baseUrl}`,
-      webSocketImpl: WebSocket,
-    });
+  function subscribe(
+    postId: string,
+    token?: string,
+    connectionParams?: Record<string, unknown>,
+  ) {
+    const client = wsClient(host, token, connectionParams);
     clients.push(client);
     const events: CommentEvent[] = [];
+    const errors: unknown[] = [];
     client.subscribe<{ commentAdded: CommentEvent }>(
       { query: SUBSCRIPTION, variables: { postId } },
       {
         next: (result) => {
-          if (result.errors) throw new Error(JSON.stringify(result.errors));
-          events.push(result.data!.commentAdded);
+          if (result.errors) errors.push(...result.errors);
+          if (result.data) events.push(result.data.commentAdded);
         },
-        error: (err) => {
-          throw err;
-        },
+        error: (err) => errors.push(err),
         complete: () => undefined,
       },
     );
-    return events;
+    return { events, errors };
   }
 
   // graphql-ws has no "subscribed" ack, so wait until the server has actually
   // attached the subscriptions' listeners to the in-memory PubSub.
+  // Subscribers from earlier tests stay connected until afterAll, so callers
+  // wait for a count relative to a baseline.
+  function listenerCount(): number {
+    const pubSub: PubSub = app.get(PUB_SUB);
+    const { ee } = pubSub as unknown as { ee: EventEmitter };
+    return ee.listenerCount('commentAdded');
+  }
+
   async function waitForListeners(count: number) {
-    const { ee } = app.get(PUB_SUB) as unknown as { ee: EventEmitter };
-    await waitFor(() => ee.listenerCount('commentAdded') >= count);
+    await waitFor(() => listenerCount() >= count);
   }
 
   async function addComment(postId: string, body: string) {
-    const res = await fetch(`http://${baseUrl}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        query: ADD_COMMENT,
-        variables: { input: { postId, authorId: user.id, body } },
-      }),
-    });
-    const json = (await res.json()) as {
-      data?: { addComment: { id: string; body: string } };
-      errors?: unknown;
-    };
-    expect(json.errors).toBeUndefined();
-    return json.data!.addComment;
+    const res = await gql<{ addComment: { id: string; body: string } }>(
+      host,
+      ADD_COMMENT,
+      { input: { postId, body } },
+      user.token,
+    );
+    expect(res.errors).toBeUndefined();
+    return res.data!.addComment;
   }
 
   it('pushes new comments live, only to subscribers of that post, with fresh author data', async () => {
-    const eventsA = subscribe(postA.id);
-    const eventsB = subscribe(postB.id);
-    await waitForListeners(2);
+    const before = listenerCount();
+    const subA = subscribe(postA.id, user.token);
+    const subB = subscribe(postB.id, user.token);
+    await waitForListeners(before + 2);
 
     // 1. Comment on B: B's subscriber gets it, A's gets nothing.
     const onB = await addComment(postB.id, 'comment on B');
-    await waitFor(() => eventsB.length === 1);
-    expect(eventsB[0]).toMatchObject({ id: onB.id, body: 'comment on B' });
+    await waitFor(() => subB.events.length === 1);
+    expect(subB.events[0]).toMatchObject({ id: onB.id, body: 'comment on B' });
 
     // 2. Comment on A: A's subscriber gets it (author resolved via loaders).
     const onA = await addComment(postA.id, 'comment on A');
-    await waitFor(() => eventsA.length === 1);
-    expect(eventsA[0]).toMatchObject({
+    await waitFor(() => subA.events.length === 1);
+    expect(subA.events[0]).toMatchObject({
       id: onA.id,
       body: 'comment on A',
       author: { username: 'subscriber-test' },
     });
     // Published events are delivered in order, so if B's comment had leaked
-    // to A's subscriber it would be in eventsA before this one.
-    expect(eventsA).toHaveLength(1);
-    expect(eventsB).toHaveLength(1);
+    // to A's subscriber it would be in A's events before this one.
+    expect(subA.events).toHaveLength(1);
+    expect(subB.events).toHaveLength(1);
 
     // 3. Same long-lived subscription, author renamed in between: the next
     // event must show the new name, not a value cached by the first event.
@@ -161,8 +148,50 @@ describe('commentAdded subscription (e2e)', () => {
       .getRepository(User)
       .update(user.id, { username: 'renamed-test' });
     await addComment(postA.id, 'after rename');
-    await waitFor(() => eventsA.length === 2);
-    expect(eventsA[1].author.username).toBe('renamed-test');
-    expect(eventsB).toHaveLength(1);
+    await waitFor(() => subA.events.length === 2);
+    expect(subA.events[1].author.username).toBe('renamed-test');
+    expect(subB.events).toHaveLength(1);
+    expect([...subA.errors, ...subB.errors]).toEqual([]);
+  });
+
+  it('lets anonymous clients subscribe and receive live events, filtered by post', async () => {
+    const before = listenerCount();
+    // No token at all, and an empty authorization value: both are anonymous.
+    const anonA = subscribe(postA.id);
+    const anonB = subscribe(postB.id, undefined, { authorization: '' });
+    await waitForListeners(before + 2);
+
+    // Writing still needs a token: the comments come from the logged-in user.
+    const onB = await addComment(postB.id, 'anon test on B');
+    await waitFor(() => anonB.events.length === 1);
+    expect(anonB.events[0]).toMatchObject({
+      id: onB.id,
+      body: 'anon test on B',
+    });
+
+    const onA = await addComment(postA.id, 'anon test on A');
+    await waitFor(() => anonA.events.length === 1);
+    expect(anonA.events[0]).toMatchObject({
+      id: onA.id,
+      body: 'anon test on A',
+    });
+    // Resolved through the loaders on an anonymous connection too. Read the
+    // current name from the database: another test may have renamed the user.
+    const author = await dataSource
+      .getRepository(User)
+      .findOneByOrFail({ id: user.id });
+    expect(anonA.events[0].author.username).toBe(author.username);
+    // B's comment never reached A's subscriber (it would have arrived first).
+    expect(anonA.events).toHaveLength(1);
+    expect(anonB.events).toHaveLength(1);
+    expect([...anonA.errors, ...anonB.errors]).toEqual([]);
+  });
+
+  it('closes the connection at the handshake when the token is invalid', async () => {
+    const forged = subscribe(postA.id, 'not-a-valid-jwt');
+    await waitFor(() => forged.errors.length > 0);
+    // graphql-ws reports the close event: 4403 Forbidden from onConnect.
+    expect(forged.errors[0]).toMatchObject({ code: 4403 });
+    expect(forged.events).toEqual([]);
   });
 });

@@ -3,9 +3,13 @@
 # ------------------------------------------------------
 
 input AddCommentInput {
-  authorId: ID!
   body: String!
   postId: ID!
+}
+
+type AuthPayload {
+  token: String!
+  user: User!
 }
 
 type Comment {
@@ -20,8 +24,15 @@ A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date
 """
 scalar DateTime
 
+input LoginInput {
+  email: String!
+  password: String!
+}
+
 type Mutation {
   addComment(input: AddCommentInput!): Comment!
+  login(input: LoginInput!): AuthPayload!
+  register(input: RegisterInput!): AuthPayload!
 }
 
 type Post {
@@ -35,8 +46,15 @@ type Post {
 }
 
 type Query {
+  me: User!
   post(id: ID!): Post
   posts(limit: Int): [Post!]!
+}
+
+input RegisterInput {
+  email: String!
+  password: String!
+  username: String!
 }
 
 type Subscription {

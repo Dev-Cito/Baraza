@@ -1,4 +1,4 @@
-import { Inject } from '@nestjs/common';
+import { Inject, UseGuards } from '@nestjs/common';
 import {
   Args,
   Context,
@@ -10,6 +10,8 @@ import {
   Subscription,
 } from '@nestjs/graphql';
 import { PubSubEngine } from 'graphql-subscriptions';
+import { CurrentUser } from '../auth/current-user.decorator';
+import { GqlAuthGuard } from '../auth/gql-auth.guard';
 import type { Loaders } from '../loaders/loaders.service';
 import { PUB_SUB } from '../pubsub/pubsub.module';
 import { User } from '../users/user.entity';
@@ -31,16 +33,22 @@ export class CommentsResolver {
   ) {}
 
   @Mutation(() => Comment)
-  async addComment(@Args('input') input: AddCommentInput): Promise<Comment> {
+  @UseGuards(GqlAuthGuard)
+  async addComment(
+    @Args('input') input: AddCommentInput,
+    @CurrentUser() user: User,
+  ): Promise<Comment> {
     // Persist first, publish second: subscribers must never receive a comment
     // that is not in the database.
-    const comment = await this.commentsService.create(input);
+    const comment = await this.commentsService.create(input, user.id);
     await this.pubSub.publish(COMMENT_ADDED, {
       commentAdded: comment,
     } satisfies CommentAddedPayload);
     return comment;
   }
 
+  // Public, like the posts/post queries: reading in real time needs no token.
+  // Writing (addComment) stays protected.
   @Subscription(() => Comment, {
     filter: (
       payload: CommentAddedPayload,

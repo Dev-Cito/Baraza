@@ -6,7 +6,6 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Post } from '../posts/post.entity';
-import { User } from '../users/user.entity';
 import { Comment } from './comment.entity';
 import { AddCommentInput } from './dto/add-comment.input';
 
@@ -44,7 +43,7 @@ export class CommentsService {
     }));
   }
 
-  async create(input: AddCommentInput): Promise<Comment> {
+  async create(input: AddCommentInput, authorId: string): Promise<Comment> {
     const body = input.body.trim();
     if (!body) throw new BadRequestException('Comment body cannot be empty');
     if (body.length > MAX_BODY_LENGTH) {
@@ -53,24 +52,15 @@ export class CommentsService {
       );
     }
     // Reject malformed ids up front: Postgres would fail on the uuid cast.
-    if (!UUID_RE.test(input.postId) || !UUID_RE.test(input.authorId)) {
-      throw new BadRequestException('postId and authorId must be UUIDs');
+    if (!UUID_RE.test(input.postId)) {
+      throw new BadRequestException('postId must be a UUID');
+    }
+    if (!(await this.comments.manager.existsBy(Post, { id: input.postId }))) {
+      throw new NotFoundException('Post not found');
     }
 
-    const { manager } = this.comments;
-    const [postExists, authorExists] = await Promise.all([
-      manager.existsBy(Post, { id: input.postId }),
-      manager.existsBy(User, { id: input.authorId }),
-    ]);
-    if (!postExists) throw new NotFoundException('Post not found');
-    if (!authorExists) throw new NotFoundException('Author not found');
-
     return this.comments.save(
-      this.comments.create({
-        body,
-        postId: input.postId,
-        authorId: input.authorId,
-      }),
+      this.comments.create({ body, postId: input.postId, authorId }),
     );
   }
 }

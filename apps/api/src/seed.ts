@@ -1,16 +1,14 @@
 import { NestFactory } from '@nestjs/core';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { randomBytes, scryptSync } from 'node:crypto';
 import { DataSource, Repository } from 'typeorm';
 import { AppModule } from './app.module';
+import { hashPassword } from './auth/password';
 import { Comment } from './comments/comment.entity';
 import { Post } from './posts/post.entity';
 import { User } from './users/user.entity';
 
-function hashPassword(password: string): string {
-  const salt = randomBytes(16).toString('hex');
-  return `${salt}:${scryptSync(password, salt, 64).toString('hex')}`;
-}
+// Every seeded user can log in with this password (dev only).
+const SEED_PASSWORD = 'password123';
 
 const USERS = [
   { username: 'amani', email: 'amani@example.com' },
@@ -57,10 +55,9 @@ async function seed() {
     .get(DataSource)
     .query('TRUNCATE "comment", "post", "user" RESTART IDENTITY CASCADE');
 
+  const passwordHash = await hashPassword(SEED_PASSWORD);
   const savedUsers = await users.save(
-    USERS.map((u) =>
-      users.create({ ...u, passwordHash: hashPassword('password123') }),
-    ),
+    USERS.map((u) => users.create({ ...u, passwordHash })),
   );
 
   // Spread createdAt so ordering by date is deterministic.

@@ -57,6 +57,14 @@ $ pnpm run test:e2e
 $ pnpm run test:cov
 ```
 
+## Security
+
+### Account enumeration (deliberate trade-off)
+
+- `register` answers `Email already registered` when the email is taken. This is a conscious UX choice: it reveals whether an email has an account.
+- `login` does not help with enumeration: it returns the same generic `Invalid credentials` for an unknown email and a wrong password, and takes the same time in both cases (a dummy argon2 hash is verified when the email is unknown).
+- Closing enumeration completely would require an email confirmation flow (`register` always answers "check your inbox"), which is out of scope for this project.
+
 ## Deployment
 
 When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
