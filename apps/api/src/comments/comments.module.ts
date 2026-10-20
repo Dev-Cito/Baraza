@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { PubSubModule } from '../pubsub/pubsub.module';
 import { Comment } from './comment.entity';
 import { CommentsResolver } from './comments.resolver';
 import { CommentsService } from './comments.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Comment])],
+  imports: [TypeOrmModule.forFeature([Comment]), PubSubModule],
   providers: [CommentsService, CommentsResolver],
   exports: [CommentsService],
 })

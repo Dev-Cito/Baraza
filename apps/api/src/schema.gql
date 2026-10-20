@@ -2,6 +2,12 @@
 # THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
 # ------------------------------------------------------
 
+input AddCommentInput {
+  authorId: ID!
+  body: String!
+  postId: ID!
+}
+
 type Comment {
   author: User!
   body: String!
@@ -13,6 +19,10 @@ type Comment {
 A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
 """
 scalar DateTime
+
+type Mutation {
+  addComment(input: AddCommentInput!): Comment!
+}
 
 type Post {
   author: User!
@@ -27,6 +37,10 @@ type Post {
 type Query {
   post(id: ID!): Post
   posts(limit: Int): [Post!]!
+}
+
+type Subscription {
+  commentAdded(postId: ID!): Comment!
 }
 
 type User {
