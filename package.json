@@ -1,0 +1,9 @@
+{
+  "name": "baraza",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev:api": "pnpm --filter api start:dev",
+    "seed": "pnpm --filter api seed"
+  }
+}

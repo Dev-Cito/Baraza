@@ -1,0 +1,6 @@
+packages:
+  - "apps/*"
+allowBuilds:
+  unrs-resolver: true
+  "@apollo/protobufjs": false
+  "@parcel/watcher": false
